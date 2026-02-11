@@ -47,7 +47,8 @@ export default defineEventHandler(async (event) => {
   }
 
   // ── Parse the order payload ──
-  const order = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody
+  const bodyStr = typeof rawBody === 'string' ? rawBody : Buffer.isBuffer(rawBody) ? rawBody.toString('utf-8') : String(rawBody)
+  const order = JSON.parse(bodyStr)
 
   // WooCommerce sends a ping on webhook creation — respond OK
   if (!order?.id || getHeader(event, 'x-wc-webhook-topic') === 'action.woocommerce_webhook_ping') {
