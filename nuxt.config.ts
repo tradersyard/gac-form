@@ -10,7 +10,6 @@ export default defineNuxtConfig({
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     resendApiKey: process.env.RESEND_API_KEY,
     wooWebhookSecret: process.env.WOO_WEBHOOK_SECRET,
-    gacFormUrl: process.env.GAC_FORM_URL,
   },
 
   app: {

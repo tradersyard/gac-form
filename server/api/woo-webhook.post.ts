@@ -18,7 +18,7 @@ import { createHmac } from 'crypto'
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { challengeTypes } from '~/app/data/gift-a-challenge'
+import { challengeTypes } from '../../app/data/gift-a-challenge'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -131,8 +131,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // ── Build nomination form URL ──
-  const formBaseUrl = config.gacFormUrl || 'https://gac.tradersyard.com'
-  const nominationFormUrl = `${formBaseUrl}/?token=${token}&order=${orderId}`
+  const nominationFormUrl = `https://gac.tradersyard.com/?token=${token}&order=${orderId}`
 
   // ── Send nomination email ──
   const emailSent = await sendNominationEmail(config, {
