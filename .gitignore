@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Nuxt build
+.nuxt/
+.output/
+dist/
+
+# Environment
+.env
+.env.*
+
+# Dev/test files
+emails/send-test.mjs
+emails/*-blue.html
+emails/*-red.html
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
