@@ -212,14 +212,8 @@ function generateCouponCode(): string {
 
 // ── Build checkout URL for the gift product ──
 function buildGiftCheckoutUrl(giftTier: string, challengeType: string, couponCode: string): string {
-  // Direct link to TradersYard register page with the challenge pre-selected and coupon applied
-  const baseUrl = 'https://tradersyard.com/auth/register'
-
-  // Map the gift tier to a challenge slug for the checkout URL
-  const tierSize = giftTier.replace(/[^0-9K]/g, '')
-  const challengeSlug = challengeType.replace(/-/g, '')
-
-  return `${baseUrl}?challenge=${challengeType}&size=${tierSize}&coupon=${couponCode}`
+  // Simple link to TradersYard register page - recipient will apply coupon code manually
+  return 'https://tradersyard.com/auth/register'
 }
 
 // ── Find WooCommerce product IDs for the gift tier ──
