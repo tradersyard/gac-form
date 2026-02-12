@@ -15,12 +15,8 @@
  *   - Status: Active
  */
 import { createHmac } from 'crypto'
-import { readFileSync } from 'fs'
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
 import { challengeTypes } from '../../app/data/gift-a-challenge'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { getNominationTemplate } from '../utils/email-templates'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -259,20 +255,7 @@ async function sendNominationEmail(
   },
 ): Promise<boolean> {
   // Load the nomination email template and fill variables
-  let html: string
-  try {
-    const templatePath = join(__dirname, '..', '..', 'emails', 'nomination.html')
-    html = readFileSync(templatePath, 'utf-8')
-  } catch {
-    // Fallback: try relative to process.cwd
-    try {
-      html = readFileSync(join(process.cwd(), 'emails', 'nomination.html'), 'utf-8')
-    } catch {
-      console.error('Webhook: Could not load nomination.html template')
-      // Use inline fallback
-      html = buildFallbackNominationHtml(data)
-    }
-  }
+  let html: string = getNominationTemplate()
 
   // Replace template variables (nomination uses ${xxx} without d. prefix)
   html = html
@@ -301,27 +284,6 @@ async function sendNominationEmail(
     console.error('Webhook: Resend error:', err?.data || err?.message || err)
     return false
   }
-}
-
-// ── Minimal fallback HTML if template file can't be loaded ──
-function buildFallbackNominationHtml(data: {
-  buyerName: string
-  orderId: string
-  giftTier: string
-  challengeName: string
-  nominationFormUrl: string
-}): string {
-  return `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-      <h1 style="color: #1a1a2e;">Thank You for Your Purchase!</h1>
-      <p>Hey ${escapeHtml(data.buyerName)},</p>
-      <p>Your order #${data.orderId} included the LOVE25 Valentine's code, which means you can gift a <strong>FREE ${data.giftTier} ${data.challengeName}</strong> to someone special.</p>
-      <p><a href="${data.nominationFormUrl}" style="display: inline-block; padding: 16px 32px; background: #4250eb; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">Nominate Someone Now</a></p>
-      <p style="color: #666; font-size: 14px;">Nominations must be submitted before Feb 18 at midnight.</p>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
-      <p style="font-size: 11px; color: #999;">&copy; 2026 TradersYard GmbH. All Rights Reserved.</p>
-    </div>
-  `
 }
 
 // ── Supabase fetch wrapper ──
