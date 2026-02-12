@@ -95,7 +95,7 @@ export default defineEventHandler(async (event) => {
     usageLimit: 3,
     expiresAt: expiresAt.toISOString(),
     description: `GAC Valentine's gift from ${buyerName} to ${recipientName} — ${resolvedGiftTier} ${challenge.name}`,
-    emailRestriction: recipientEmail.toLowerCase().trim(),
+    // No email restriction - product IDs + usage limit provide enough protection
   })
 
   // ── Step 6: Save to Supabase ──
