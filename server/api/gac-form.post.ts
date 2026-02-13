@@ -1,5 +1,4 @@
 import { challengeTypes } from '../../app/data/gift-a-challenge'
-import { getRecipientCouponTemplate, getBuyerConfirmationTemplate } from '../utils/email-templates'
 
 // Hardcoded WooCommerce product IDs for each gift tier
 // Includes both "One off" and "Reset" variants so the coupon works for either
@@ -71,111 +70,52 @@ export default defineEventHandler(async (event) => {
 
   const resolvedGiftTier = giftTier || account.giftTier
 
-  // ── Step 1: Verify buyer against WooCommerce orders ──
+  // ── Step 1: Verify buyer against WooCommerce orders (optional verification) ──
   const verification = await verifyBuyerOrder(config, buyerEmail.toLowerCase().trim(), challengeType, account.value)
 
-  // ── Step 2: Find the WooCommerce product IDs for the gift tier ──
+  // ── Step 2: Find the WooCommerce product IDs for reference ──
   const giftProductIds = findGiftProductIds(resolvedGiftTier, challengeType)
 
-  if (giftProductIds.length === 0) {
-    console.error(`No WooCommerce products found for gift tier: ${resolvedGiftTier} (${challengeType})`)
-    // Don't block — we'll create the coupon without product restriction and flag for manual review
-  }
+  // ── Step 3: Generate reference code for tracking ──
+  const referenceCode = generateCouponCode()
 
-  // ── Step 3: Generate unique coupon code ──
-  const couponCode = generateCouponCode()
-
-  // ── Step 4: 48-hour expiry ──
-  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000)
-
-  // ── Step 5: Create WooCommerce coupon via edge function ──
-  const couponResult = await createWooCoupon(config, {
-    code: couponCode,
-    productIds: giftProductIds,
-    usageLimit: 3,
-    expiresAt: expiresAt.toISOString(),
-    description: `GAC Valentine's gift from ${buyerName} to ${recipientName} — ${resolvedGiftTier} ${challenge.name}`,
-    // No email restriction - product IDs + usage limit provide enough protection
-  })
-
-  // ── Step 6: Save to Supabase ──
+  // ── Step 4: Save nomination to Supabase for support team to process ──
   const { error: insertError } = await supabaseFetch(config, '/rest/v1/gift_challenge_claims', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
     body: {
-      claim_code: couponCode,
+      claim_code: referenceCode,
       buyer_name: buyerName.trim(),
       buyer_email: buyerEmail.toLowerCase().trim(),
       challenge_type: challengeType,
       account_size: account.value,
       gift_tier: resolvedGiftTier,
-      gift_challenge_type: couponResult ? challengeType : null,
-      gift_account_size: giftProductIds.length > 0 ? account.value : null,
+      gift_challenge_type: challengeType,
+      gift_account_size: account.value,
       recipient_name: recipientName.trim(),
       recipient_email: recipientEmail.toLowerCase().trim(),
       personal_message: personalMessage?.trim() || null,
       woo_order_id: verification.orderId || null,
       woo_product_name: verification.productName || null,
       woo_order_verified: verification.verified,
-      woo_coupon_id: couponResult?.coupon?.id || null,
-      woo_coupon_code: couponResult?.coupon?.code || couponCode,
+      woo_coupon_id: null, // Will be set by support when they issue the coupon
+      woo_coupon_code: null, // Will be set by support
       woo_coupon_product_ids: giftProductIds.length > 0 ? giftProductIds : null,
-      status: couponResult ? 'coupon_created' : 'pending',
-      expires_at: expiresAt.toISOString(),
+      status: 'pending_review', // Support will review and process
+      expires_at: null, // Support sets expiry when issuing coupon
     },
   })
 
   if (insertError) {
     console.error('Supabase insert error:', insertError)
-    throw createError({ statusCode: 500, message: 'Failed to create gift claim. Please try again.' })
-  }
-
-  // ── Step 7: Determine the checkout URL for the gift ──
-  // Build a direct checkout link for the specific gift product
-  const checkoutUrl = buildGiftCheckoutUrl(resolvedGiftTier, challengeType, couponCode)
-
-  // ── Step 8: Send recipient email ──
-  const recipientEmailSent = await sendRecipientEmail(config, {
-    recipientName: recipientName.trim(),
-    recipientEmail: recipientEmail.toLowerCase().trim(),
-    senderName: buyerName.trim(),
-    couponCode: couponResult?.coupon?.code || couponCode,
-    giftTier: resolvedGiftTier,
-    challengeName: challenge.name,
-    personalMessage: personalMessage?.trim() || null,
-    expiresAt: expiresAt.toISOString(),
-    checkoutUrl,
-  })
-
-  // ── Step 9: Send buyer confirmation email ──
-  await sendBuyerConfirmationEmail(config, {
-    buyerName: buyerName.trim(),
-    buyerEmail: buyerEmail.toLowerCase().trim(),
-    recipientName: recipientName.trim(),
-    recipientEmail: recipientEmail.toLowerCase().trim(),
-    couponCode: couponResult?.coupon?.code || couponCode,
-    giftTier: resolvedGiftTier,
-    challengeName: challenge.name,
-    expiresAt: expiresAt.toISOString(),
-  })
-
-  // ── Step 10: Update status to email_sent ──
-  if (recipientEmailSent) {
-    await supabaseFetch(config, `/rest/v1/gift_challenge_claims?claim_code=eq.${couponCode}`, {
-      method: 'PATCH',
-      body: {
-        status: 'email_sent',
-        email_sent_at: new Date().toISOString(),
-      },
-    })
+    throw createError({ statusCode: 500, message: 'Failed to submit gift nomination. Please try again.' })
   }
 
   return {
     success: true,
-    message: 'Gift sent successfully! Your recipient will receive an email shortly.',
-    couponCode: couponResult?.coupon?.code || couponCode,
+    message: 'Gift nomination submitted successfully! Our team will review and send the gift to your recipient within 24 hours.',
+    referenceCode: referenceCode,
     verified: verification.verified,
-    couponCreated: !!couponResult,
   }
 })
 
@@ -210,12 +150,6 @@ function generateCouponCode(): string {
   return code
 }
 
-// ── Build checkout URL for the gift product ──
-function buildGiftCheckoutUrl(giftTier: string, challengeType: string, couponCode: string): string {
-  // Simple link to TradersYard register page - recipient will apply coupon code manually
-  return 'https://tradersyard.com/auth/register'
-}
-
 // ── Find WooCommerce product IDs for the gift tier ──
 function findGiftProductIds(giftTier: string, challengeType: string): number[] {
   // Use the hardcoded map — key is "giftTier|challengeType"
@@ -229,44 +163,6 @@ function findGiftProductIds(giftTier: string, challengeType: string): number[] {
 
   console.log(`Gift tier ${key} → product IDs: ${productIds.join(', ')}`)
   return productIds
-}
-
-// ── Create WooCommerce coupon via edge function ──
-async function createWooCoupon(
-  config: any,
-  params: {
-    code: string
-    productIds: number[]
-    usageLimit: number
-    expiresAt: string
-    description: string
-    emailRestriction?: string
-  },
-): Promise<any | null> {
-  try {
-    const url = `${config.supabaseUrl}/functions/v1/create-woo-coupon`
-    const response = await $fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'create_coupon',
-        code: params.code,
-        productIds: params.productIds.length > 0 ? params.productIds : undefined,
-        usageLimit: params.usageLimit,
-        expiresAt: params.expiresAt,
-        description: params.description,
-        emailRestriction: params.emailRestriction,
-      }),
-    })
-
-    return response
-  } catch (err: any) {
-    console.error('WooCommerce coupon creation failed:', err?.data || err?.message || err)
-    return null
-  }
 }
 
 // ── Verify buyer's WooCommerce order ──
@@ -328,126 +224,6 @@ async function verifyBuyerOrder(
   }
 }
 
-// ── Send recipient email via Resend ──
-async function sendRecipientEmail(
-  config: any,
-  data: {
-    recipientName: string
-    recipientEmail: string
-    senderName: string
-    couponCode: string
-    giftTier: string
-    challengeName: string
-    personalMessage: string | null
-    expiresAt: string
-    checkoutUrl: string
-  },
-): Promise<boolean> {
-  const expiryDate = new Date(data.expiresAt)
-  const expiryFormatted = expiryDate.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  })
-
-  const personalMessageHtml = data.personalMessage
-    ? `<p style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: #475569; line-height: 1.6; font-style: italic;">&#8220;${escapeHtml(data.personalMessage)}&#8221;</p>`
-    : `<p style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: #475569; line-height: 1.6;"><strong style="color: #4250eb;">${escapeHtml(data.senderName)}</strong> has gifted you a free Trading Challenge from TradersYard.</p>`
-
-  // Load from the inlined HTML template
-  let html: string = getRecipientCouponTemplate()
-  html = html
-    .replace(/\$\{d\.senderName\}/g, escapeHtml(data.senderName))
-    .replace(/\$\{d\.recipientName\}/g, escapeHtml(data.recipientName))
-    .replace(/\$\{d\.couponCode\}/g, data.couponCode)
-    .replace(/\$\{d\.giftTier\}/g, data.giftTier)
-    .replace(/\$\{d\.challengeName\}/g, data.challengeName)
-    .replace(/\$\{d\.personalMessageHtml\}/g, personalMessageHtml)
-    .replace(/\$\{d\.checkoutUrl\}/g, data.checkoutUrl)
-    .replace(/\$\{d\.expiryFormatted\}/g, expiryFormatted)
-
-  try {
-    await $fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: 'TradersYard <noreply@tradersyard.de>',
-        to: [data.recipientEmail],
-        subject: `🎁 ${data.senderName} gifted you a free Trading Challenge!`,
-        html,
-      }),
-    })
-    return true
-  } catch (err: any) {
-    console.error('Resend (recipient) error:', err?.data || err?.message || err)
-    return false
-  }
-}
-
-// ── Send buyer confirmation email via Resend ──
-async function sendBuyerConfirmationEmail(
-  config: any,
-  data: {
-    buyerName: string
-    buyerEmail: string
-    recipientName: string
-    recipientEmail: string
-    couponCode: string
-    giftTier: string
-    challengeName: string
-    expiresAt: string
-  },
-): Promise<boolean> {
-  const expiryDate = new Date(data.expiresAt)
-  const expiryFormatted = expiryDate.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  })
-
-  // Load from the inlined HTML template
-  let html: string = getBuyerConfirmationTemplate()
-  html = html
-    .replace(/\$\{d\.buyerName\}/g, escapeHtml(data.buyerName))
-    .replace(/\$\{d\.recipientName\}/g, escapeHtml(data.recipientName))
-    .replace(/\$\{d\.recipientEmail\}/g, data.recipientEmail)
-    .replace(/\$\{d\.couponCode\}/g, data.couponCode)
-    .replace(/\$\{d\.giftTier\}/g, data.giftTier)
-    .replace(/\$\{d\.challengeName\}/g, data.challengeName)
-    .replace(/\$\{d\.expiryFormatted\}/g, expiryFormatted)
-
-  try {
-    await $fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.resendApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: 'TradersYard <noreply@tradersyard.de>',
-        to: [data.buyerEmail],
-        subject: `Gift confirmed! 🎁 Your challenge gift to ${data.recipientName}`,
-        html,
-      }),
-    })
-    return true
-  } catch (err: any) {
-    console.error('Resend (buyer) error:', err?.data || err?.message || err)
-    return false
-  }
-}
-
 // ── One-gift-per-buyer dedup check ──
 async function checkExistingGift(config: any, email: string): Promise<boolean> {
   const url = `${config.supabaseUrl}/rest/v1/gift_challenge_claims?buyer_email=eq.${encodeURIComponent(email)}&select=id&limit=1`
@@ -463,10 +239,5 @@ async function checkExistingGift(config: any, email: string): Promise<boolean> {
     // If table doesn't exist or query fails, allow through
     return false
   }
-}
-
-// ── HTML escape ──
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
